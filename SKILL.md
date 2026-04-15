@@ -1,3 +1,5 @@
+**English** | [中文](SKILL_zh.md)
+
 ---
 name: deploy-zerotier
 description: "Deploy ZeroTier on an Alpine Linux server and configure it as a bidirectional LAN gateway. Use this skill whenever the user wants to install ZeroTier on Alpine Linux, set up a ZeroTier gateway or bridge, enable cross-LAN access through ZeroTier, or configure NAT forwarding between ZeroTier and a local network. Also trigger when the user mentions deploying ZeroTier, setting up a VPN gateway on Alpine, or connecting remote LANs through ZeroTier."

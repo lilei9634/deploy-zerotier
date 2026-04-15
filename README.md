@@ -1,3 +1,5 @@
+**English** | [中文](README_zh.md)
+
 # deploy-zerotier
 
 A [Claude Code](https://claude.ai/claude-code) skill that automates ZeroTier deployment on Alpine Linux and configures it as a **bidirectional LAN gateway**.
