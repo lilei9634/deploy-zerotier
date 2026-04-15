@@ -12,7 +12,7 @@ This skill deploys ZeroTier on an Alpine Linux server and configures it as a **b
 
 ## Why this skill exists
 
-Alpine Linux doesn't ship a ZeroTier package in its main or community repos, so the standard `apk add` or the official `install.zerotier.com` script both fail. The workaround is to compile from source. Beyond installation, acting as a LAN gateway requires IP forwarding, iptables NAT rules, TUN device setup, and route configuration in ZeroTier Central — easy to get wrong if done ad-hoc.
+Alpine Linux doesn't ship a ZeroTier package in its main or community repos, so the standard `apk add` or the official `install.zerotier.com` script both fail. This skill bundles a **pre-compiled x86_64 musl binary** (built on Alpine 3.23) in `bin/zerotier-one` to skip the lengthy compilation step. If the pre-compiled binary doesn't work on the target server (architecture mismatch, musl version incompatibility, etc.), the skill falls back to compiling from source. Beyond installation, acting as a LAN gateway requires IP forwarding, iptables NAT rules, TUN device setup, and route configuration in ZeroTier Central — easy to get wrong if done ad-hoc.
 
 ## Information to collect
 
@@ -39,35 +39,65 @@ ssh <user>@<ip> "cat /etc/os-release && uname -m && ip a && ip route"
 Confirm it's Alpine Linux and note:
 - The primary LAN interface (usually `eth0`) and its subnet (e.g., `192.168.2.0/24`)
 - The default gateway
-- Architecture (x86_64 expected for compilation)
+- Architecture (`x86_64` means the pre-compiled binary should work; other architectures require source compilation)
 
-### Step 2: Enable community repository
+### Step 2: Install ZeroTier binary (pre-compiled → fallback to source compile)
 
-Check `/etc/apk/repositories`. If the community line is commented out, uncomment it:
+This skill ships a pre-compiled binary at `bin/zerotier-one` (built on Alpine 3.23, x86_64, musl-linked). Try using it first — it's much faster than compiling from source (~10 minutes saved).
+
+**Strategy:** Upload the pre-compiled binary → test it → if it works, create symlinks and proceed. If it fails, fall back to source compilation.
+
+#### Option A: Use pre-compiled binary (fast path)
+
+First, find the absolute path to `bin/zerotier-one` in this skill's directory. Then upload and test:
+
+```bash
+scp <path_to_skill>/bin/zerotier-one <user>@<ip>:/usr/sbin/zerotier-one
+ssh <user>@<ip> "chmod +x /usr/sbin/zerotier-one && /usr/sbin/zerotier-one --version"
+```
+
+If the `--version` command outputs a version string (e.g., `ZeroTier One version 1.16.1`), the binary works. Create the symlinks and data directory:
+
+```bash
+ssh <user>@<ip> "ln -sf /usr/sbin/zerotier-one /usr/sbin/zerotier-cli && \
+ln -sf /usr/sbin/zerotier-one /usr/sbin/zerotier-idtool && \
+mkdir -p /var/lib/zerotier-one && \
+ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-one && \
+ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-cli && \
+ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-idtool"
+```
+
+Also install runtime dependencies (iptables is needed later regardless):
+
+```bash
+ssh <user>@<ip> "apk update && apk add iptables"
+```
+
+Then **skip to Step 3**.
+
+#### Option B: Compile from source (fallback)
+
+If the pre-compiled binary fails (wrong architecture, shared library issues, etc.), fall back to source compilation.
+
+Enable community repository if needed:
 
 ```bash
 ssh <user>@<ip> "sed -i 's|^#\(http.*\/community\)|\1|' /etc/apk/repositories"
 ```
 
-This is needed for some build dependencies.
-
-### Step 3: Install build dependencies
+Install build dependencies:
 
 ```bash
 ssh <user>@<ip> "apk update && apk add build-base linux-headers openssl-dev cargo rust make git nlohmann-json curl bash iptables"
 ```
 
-This installs the C++/Rust toolchain, headers, and iptables in one pass. The Rust/Cargo dependency is required because ZeroTier's SSO module (`libzeroidc`) is written in Rust.
-
-### Step 4: Compile ZeroTier from source
+Clone and compile (use a **long timeout**, at least 10 minutes / 600000ms — Rust compilation is slow):
 
 ```bash
 ssh <user>@<ip> "cd /tmp && git clone --depth 1 https://github.com/zerotier/ZeroTierOne.git && cd ZeroTierOne && make -j\$(nproc)"
 ```
 
-This takes a few minutes depending on the server's CPU. Use a **long timeout** (at least 10 minutes / 600000ms) for this command — Rust compilation is slow.
-
-Then install:
+Install:
 
 ```bash
 ssh <user>@<ip> "cd /tmp/ZeroTierOne && make install"
@@ -75,7 +105,7 @@ ssh <user>@<ip> "cd /tmp/ZeroTierOne && make install"
 
 This places `zerotier-one`, `zerotier-cli`, and `zerotier-idtool` in `/usr/sbin/` with symlinks in `/var/lib/zerotier-one/`.
 
-### Step 5: Create OpenRC service
+### Step 3: Create OpenRC service
 
 Write the init script:
 
@@ -103,7 +133,7 @@ Enable and start:
 ssh <user>@<ip> "rc-update add zerotier-one default && rc-service zerotier-one start"
 ```
 
-### Step 6: Ensure TUN device exists
+### Step 4: Ensure TUN device exists
 
 This is a common gotcha on minimal Alpine installs — `/dev/net/tun` may not exist, and without it ZeroTier can't create its virtual network interface.
 
@@ -117,7 +147,7 @@ After creating TUN, restart ZeroTier so it picks up the device:
 ssh <user>@<ip> "rc-service zerotier-one restart"
 ```
 
-### Step 7: Join ZeroTier network
+### Step 5: Join ZeroTier network
 
 If you don't have the network ID yet, **ask the user now**.
 
@@ -135,7 +165,7 @@ You should see `ONLINE` and a 10-character node ID.
 
 **Tell the user to authorize this node** in [ZeroTier Central](https://my.zerotier.com). Provide the node ID so they can find it easily. Then **wait for confirmation** before proceeding.
 
-### Step 8: Verify network connection
+### Step 6: Verify network connection
 
 After authorization, wait a few seconds and check:
 
@@ -151,7 +181,7 @@ Note the **ZT interface name** (e.g., `ztzlgjw6dt`), **ZT IP** (e.g., `192.168.1
 
 If `listnetworks` is empty or status is not `OK`, the user may not have authorized yet. Ask them to check.
 
-### Step 9: Enable IP forwarding
+### Step 7: Enable IP forwarding
 
 ```bash
 ssh <user>@<ip> "grep -q 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf && sysctl -p"
@@ -159,7 +189,7 @@ ssh <user>@<ip> "grep -q 'net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.i
 
 The `grep` guard prevents duplicate entries if run multiple times.
 
-### Step 10: Configure iptables NAT/forwarding
+### Step 8: Configure iptables NAT/forwarding
 
 Using the auto-detected values:
 - `LAN_IF` = the physical LAN interface (e.g., `eth0`)
@@ -183,13 +213,13 @@ What these rules do:
 - **Second MASQUERADE**: Rewrites source IP for LAN->ZT traffic so remote ZT nodes see packets from the gateway's ZT address
 - **FORWARD rules**: Allow bidirectional packet flow between the two interfaces
 
-### Step 11: Persist iptables rules
+### Step 9: Persist iptables rules
 
 ```bash
 ssh <user>@<ip> "/etc/init.d/iptables save && rc-update add iptables default"
 ```
 
-### Step 12: Final verification
+### Step 10: Final verification
 
 ```bash
 ssh <user>@<ip> "echo '=== ZeroTier ===' && zerotier-cli listnetworks && \
@@ -200,7 +230,7 @@ echo '=== Interfaces ===' && ip -brief a && \
 echo '=== Services ===' && rc-status default"
 ```
 
-### Step 13: Tell the user what to do next
+### Step 11: Tell the user what to do next
 
 After deployment, present the user with a summary table and the remaining manual steps:
 
@@ -231,9 +261,9 @@ After deployment, present the user with a summary table and the remaining manual
 | Symptom | Cause | Fix |
 |---|---|---|
 | `listnetworks` empty after join | Node not authorized | User must authorize in ZeroTier Central |
-| No `zt*` interface appears | `/dev/net/tun` missing | Run Step 6 (create TUN device), restart ZeroTier |
-| `zerotier-one: not found` | Compilation failed | Check `make` output for errors; ensure all deps installed |
-| Can't reach LAN from ZT | iptables rules missing or IP forward off | Re-run Steps 9-10, verify with Step 12 |
+| No `zt*` interface appears | `/dev/net/tun` missing | Run Step 4 (create TUN device), restart ZeroTier |
+| `zerotier-one: not found` | Binary upload failed and compilation failed | Try Option B in Step 2; check `make` output for errors |
+| Can't reach LAN from ZT | iptables rules missing or IP forward off | Re-run Steps 7-8, verify with Step 10 |
 | LAN devices can't reach ZT | No static route on router | Add route on router: ZT subnet → server LAN IP |
 
 ## Cleanup (optional)

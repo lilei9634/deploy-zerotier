@@ -13,7 +13,8 @@ Your LAN (e.g. 192.168.2.0/24)
   Remote ZeroTier nodes + their LANs
 ```
 
-- **Compiles ZeroTier from source** (Alpine has no official package)
+- **Ships a pre-compiled binary** for x86_64 Alpine — skips the ~10 min compilation step
+- **Falls back to source compilation** if the binary doesn't work (different arch, etc.)
 - **Creates OpenRC service** for auto-start
 - **Configures bidirectional NAT/forwarding** so both sides can reach each other's LAN
 - **Persists all settings** across reboots (iptables, IP forwarding, TUN module)
@@ -41,7 +42,7 @@ You can also follow the step-by-step instructions in [SKILL.md](SKILL.md) direct
 
 | Component | Details |
 |---|---|
-| ZeroTier One | Compiled from [source](https://github.com/zerotier/ZeroTierOne), installed to `/usr/sbin/` |
+| ZeroTier One | Pre-compiled binary (x86_64 musl) or compiled from [source](https://github.com/zerotier/ZeroTierOne), installed to `/usr/sbin/` |
 | OpenRC service | `/etc/init.d/zerotier-one`, auto-start on boot |
 | IP forwarding | `net.ipv4.ip_forward=1` in `/etc/sysctl.conf` |
 | iptables rules | Bidirectional MASQUERADE + FORWARD, persisted via `/etc/init.d/iptables save` |
