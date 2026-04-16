@@ -221,6 +221,47 @@ What these rules do:
 ssh <user>@<ip> "/etc/init.d/iptables save && rc-update add iptables default"
 ```
 
+### Step 9.5: Fix asymmetric routing (policy routing)
+
+**Why this is needed:** When LAN devices access the remote network through a side router (旁路由) that performs NAT, an asymmetric routing problem occurs. The outbound path goes: device → side router (NAT) → main router → ZT gateway → ZeroTier. But the return path goes: ZeroTier → ZT gateway → side router (directly via L2, bypassing the main router). The side router's conntrack cannot match the reply because it arrived from an unexpected direction, causing TCP connections to hang after the SYN-ACK.
+
+**Solution:** Add a policy route on the ZT gateway that forces all return traffic from the ZeroTier interface to be routed through the main router, making the path symmetric.
+
+First, identify the **main router IP** (the primary LAN gateway, e.g., `192.168.2.1`). This is NOT the side router — it's the core router that handles inter-subnet routing. Check `ip route` output or ask the user if unsure.
+
+```bash
+ssh <user>@<ip> "ZT_IF=<zt_interface> && LAN_SUBNET_CIDR=<lan_subnet> && MAIN_ROUTER=<main_router_ip> && \
+ip route add \$LAN_SUBNET_CIDR via \$MAIN_ROUTER table 100 && \
+ip rule add iif \$ZT_IF table 100"
+```
+
+For example, if the LAN subnet is `192.168.2.0/24`, the main router is `192.168.2.1`, and the ZT interface is `ztzlgjw6dt`:
+
+```bash
+ssh <user>@<ip> "ip route add 192.168.2.0/24 via 192.168.2.1 table 100 && \
+ip rule add iif ztzlgjw6dt table 100"
+```
+
+What this does:
+- **`ip rule add iif <ZT_IF> table 100`**: Any packet entering via the ZeroTier interface uses routing table 100 for forwarding decisions
+- **`ip route add <LAN_SUBNET> via <MAIN_ROUTER> table 100`**: In table 100, route LAN-destined traffic through the main router instead of sending directly via L2
+
+This ensures return traffic follows the same path as outbound traffic: ZT gateway → main router → side router → device.
+
+**Persist the policy route across reboots:**
+
+```bash
+ssh <user>@<ip> "cat > /etc/local.d/zt-policy-route.start << EOF
+#!/bin/sh
+ip route add <lan_subnet> via <main_router_ip> table 100
+ip rule add iif <zt_interface> table 100
+EOF
+chmod +x /etc/local.d/zt-policy-route.start && \
+rc-update add local default"
+```
+
+**Note:** If there is no side router (NAT gateway) in the network — i.e., all devices use the main router directly as their gateway — this step can be skipped.
+
 ### Step 10: Final verification
 
 ```bash
@@ -267,6 +308,7 @@ After deployment, present the user with a summary table and the remaining manual
 | `zerotier-one: not found` | Binary upload failed and compilation failed | Try Option B in Step 2; check `make` output for errors |
 | Can't reach LAN from ZT | iptables rules missing or IP forward off | Re-run Steps 7-8, verify with Step 10 |
 | LAN devices can't reach ZT | No static route on router | Add route on router: ZT subnet → server LAN IP |
+| TCP connects but hangs (no data) | Asymmetric routing due to side router NAT | Add policy route (Step 9.5) to force symmetric return path |
 
 ## Cleanup (optional)
 

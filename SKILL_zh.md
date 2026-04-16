@@ -221,6 +221,47 @@ iptables -A FORWARD -i \$ZT_IF -o \$LAN_IF -j ACCEPT"
 ssh <用户>@<IP> "/etc/init.d/iptables save && rc-update add iptables default"
 ```
 
+### 步骤 9.5：修复非对称路由（策略路由）
+
+**为什么需要这一步：** 当局域网设备通过旁路由（会做 NAT）访问远程网络时，会出现非对称路由问题。去程路径为：设备 → 旁路由（NAT）→ 主路由 → ZT 网关 → ZeroTier。但回程路径为：ZeroTier → ZT 网关 → 旁路由（直接通过二层转发，绕过了主路由）。旁路由的 conntrack 因为回包来自意料之外的方向而无法匹配，导致 TCP 连接在 SYN-ACK 之后挂起。
+
+**解决方案：** 在 ZT 网关上添加策略路由，强制所有从 ZeroTier 接口返回的流量经过主路由，使路径对称。
+
+首先确认**主路由 IP**（局域网的核心路由器，如 `192.168.2.1`），注意不是旁路由。可通过 `ip route` 输出确认，或向用户询问。
+
+```bash
+ssh <用户>@<IP> "ZT_IF=<zt接口> && LAN_SUBNET_CIDR=<lan网段> && MAIN_ROUTER=<主路由IP> && \
+ip route add \$LAN_SUBNET_CIDR via \$MAIN_ROUTER table 100 && \
+ip rule add iif \$ZT_IF table 100"
+```
+
+例如，局域网网段为 `192.168.2.0/24`，主路由为 `192.168.2.1`，ZT 接口为 `ztzlgjw6dt`：
+
+```bash
+ssh <用户>@<IP> "ip route add 192.168.2.0/24 via 192.168.2.1 table 100 && \
+ip rule add iif ztzlgjw6dt table 100"
+```
+
+这些规则的作用：
+- **`ip rule add iif <ZT接口> table 100`**：所有从 ZeroTier 接口进入的数据包使用路由表 100 进行转发决策
+- **`ip route add <局域网网段> via <主路由IP> table 100`**：在路由表 100 中，将发往局域网的流量通过主路由转发，而不是直接通过二层发送
+
+这确保了回程流量与去程走相同的路径：ZT 网关 → 主路由 → 旁路由 → 设备。
+
+**持久化策略路由（重启后生效）：**
+
+```bash
+ssh <用户>@<IP> "cat > /etc/local.d/zt-policy-route.start << EOF
+#!/bin/sh
+ip route add <lan网段> via <主路由IP> table 100
+ip rule add iif <zt接口> table 100
+EOF
+chmod +x /etc/local.d/zt-policy-route.start && \
+rc-update add local default"
+```
+
+**注意：** 如果网络中没有旁路由（NAT 网关），即所有设备直接使用主路由作为网关，可以跳过此步骤。
+
 ### 步骤 10：最终验证
 
 ```bash
@@ -267,6 +308,7 @@ echo '=== 服务 ===' && rc-status default"
 | `zerotier-one: not found` | 二进制上传失败且编译也失败 | 尝试步骤 2 中的方案 B；检查 `make` 输出的错误 |
 | ZT 无法访问局域网 | iptables 规则缺失或 IP 转发未开启 | 重新执行步骤 7-8，用步骤 10 验证 |
 | 局域网设备无法访问 ZT | 路由器上无静态路由 | 在路由器上添加路由：ZT 网段 → 服务器局域网 IP |
+| TCP 能连接但挂起（无数据） | 旁路由 NAT 导致非对称路由 | 添加策略路由（步骤 9.5）强制回程路径对称 |
 
 ## 清理（可选）
 
