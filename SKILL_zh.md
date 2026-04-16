@@ -69,11 +69,21 @@ ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-cli && \
 ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-idtool"
 ```
 
-安装运行时依赖（iptables 后面要用到）：
+安装运行时依赖。**`libstdc++` 和 `libgcc` 是必需的**，预编译二进制文件动态链接了 C++ 标准库。全新安装的 Alpine 上没有这两个包，二进制会报错（如 `Error loading shared library libstdc++.so.6: No such file or directory`），即使 `--version` 表面上可能运行。`iptables` 后面还会用到：
 
 ```bash
-ssh <用户>@<IP> "apk update && apk add iptables"
+ssh <用户>@<IP> "sed -i 's|^#\(http.*\/community\)|\1|' /etc/apk/repositories && apk update && apk add libstdc++ libgcc iptables"
 ```
+
+（`sed` 用于启用 community 仓库——`libstdc++` 和 `libgcc` 依赖它。重复执行无副作用，已启用则跳过。）
+
+**装完运行时库后，重新测试一下二进制是否真能跑起来：**
+
+```bash
+ssh <用户>@<IP> "/usr/sbin/zerotier-one --version"
+```
+
+应该看到 `ZeroTier One version 1.16.1 ...`。如果仍然报动态库错误，回退到方案 B。
 
 然后**跳到步骤 3**。
 

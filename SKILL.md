@@ -69,11 +69,21 @@ ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-cli && \
 ln -sf /usr/sbin/zerotier-one /var/lib/zerotier-one/zerotier-idtool"
 ```
 
-Also install runtime dependencies (iptables is needed later regardless):
+Also install runtime dependencies. **`libstdc++` and `libgcc` are required** by the pre-compiled binary (it's dynamically linked against the C++ standard library). On a fresh Alpine install these are not present, and the binary will fail with errors like `Error loading shared library libstdc++.so.6: No such file or directory` even though `--version` may appear to run. `iptables` is needed later regardless:
 
 ```bash
-ssh <user>@<ip> "apk update && apk add iptables"
+ssh <user>@<ip> "sed -i 's|^#\(http.*\/community\)|\1|' /etc/apk/repositories && apk update && apk add libstdc++ libgcc iptables"
 ```
+
+(The `sed` enables the community repo — required to install `libstdc++` and `libgcc`. Safe to run unconditionally; it's a no-op if already enabled.)
+
+**After installing the libs, re-test the binary** to confirm it actually runs:
+
+```bash
+ssh <user>@<ip> "/usr/sbin/zerotier-one --version"
+```
+
+You should see `ZeroTier One version 1.16.1 ...`. If you still get shared library errors, fall back to Option B.
 
 Then **skip to Step 3**.
 
